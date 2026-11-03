@@ -1,0 +1,1323 @@
+// ChristianConnect — Prisma Schema (Phase 0 + Phase 1 + Phase 2 Dating)
+// Database: MongoDB
+// ORM: Prisma 5
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Account type is set ONCE at signup based on verified date of birth.
+/// It is NOT user-editable and NOT a UI toggle.
+/// Minor accounts cannot access chat, matching, Stories, or live features.
+enum AccountType {
+  adult_verified // DOB confirms 18+, identity verified
+  adult_unverified // DOB confirms 18+, not yet identity-verified
+  minor_content_only // DOB confirms under 18 — content read-only account
+  church_partner // Verified church / ministry partner account
+}
+
+enum Gender {
+  male
+  female
+  prefer_not_to_say
+}
+
+enum GroupType {
+  friendship
+  bible_study
+  prayer_partner
+  accountability
+  dating // opposite-gender matching only
+  mentorship // new convert mentorship
+  apologetics
+  general
+}
+
+enum ModerationStatus {
+  pending // awaiting moderation
+  approved // passed all moderation checks
+  flagged // flagged by automated system — hidden pending admin review
+  auto_rejected // immediately rejected by automated system
+}
+
+enum ReportTargetType {
+  message
+  user
+  group
+  prayer_request
+}
+
+enum ReportStatus {
+  pending
+  reviewed
+  resolved
+  dismissed
+}
+
+enum MemberRole {
+  member
+  moderator
+  admin
+}
+
+enum AdminActionType {
+  approve_message
+  reject_message
+  ban_user
+  unban_user
+  dismiss_report
+  resolve_report
+  delete_story
+}
+
+// ── Phase 1 new enums ────────────────────────────────────────────────────────
+
+enum FaithBackground {
+  new_to_faith // "New to faith"
+  less_than_a_year // "Less than a year"
+  several_years // "Several years"
+  most_of_my_life // "Most of my life"
+}
+
+enum Denomination {
+  catholic
+  baptist
+  pentecostal
+  non_denominational
+  orthodox
+  reformed
+  prefer_not_to_say
+}
+
+/// Why the user joined — stored as array on UserProfile
+enum JoinReason {
+  friendship
+  bible_study
+  prayer_partner
+  accountability
+  mentorship
+  devotionals
+  apologetics
+  general_connection
+}
+
+enum BibleTranslation {
+  NIV
+  ESV
+  KJV
+  NKJV
+  NLT
+  CSB
+  NASB
+  MSG
+}
+
+enum PrayerReactionType {
+  praying // "Praying for you"
+  amen // "Amen"
+  comment // text comment
+}
+
+enum ReadingPlanFocus {
+  genesis
+  psalms
+  proverbs
+  new_testament
+  gospels
+  pauline_epistles
+  chronological
+  wisdom_literature
+  prophecy
+  whole_bible
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// USER
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id          String  @id @default(cuid()) @map("_id")
+  /// Clerk user ID — used to link JWT auth to this record
+  clerkId     String  @unique
+  email       String  @unique
+  displayName String
+  bio         String?
+  avatarUrl   String?
+
+  /// Location fields (Phase 2 City/Region hubs)
+  city   String?
+  region String? // state/province/region
+
+  /// Apologist badge (Phase 2)
+  isTrustedApologist Boolean @default(false)
+
+  /// Stored as a full date for precise age verification
+  dateOfBirth DateTime
+
+  /// Gender is required — used for opposite-gender Dating matching enforcement
+  gender Gender
+
+  /// Set ONCE at signup from DOB. Protected at the API middleware level.
+  accountType AccountType @default(adult_unverified)
+
+  /// True only after all 4 Statement of Faith affirmations are accepted
+  statementOfFaithAccepted Boolean @default(false)
+
+  /// Parental consent fields (minors only)
+  parentEmail        String?
+  parentConsentGiven Boolean @default(false)
+  parentConsentToken String?
+
+  /// Moderation / safety flags
+  isBanned Boolean   @default(false)
+  bannedAt DateTime?
+  bannedBy String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations — Phase 0
+  sentMessages     Message[]     @relation("MessageSender")
+  receivedMessages Message[]     @relation("MessageRecipient")
+  groupMemberships GroupMember[]
+  reports          Report[]      @relation("ReportSubmitter")
+  reportedAs       Report[]      @relation("ReportedUser")
+  stories          Story[]
+  adminActions     AdminAction[] @relation("AdminActor")
+
+  // Relations — Phase 1
+  profile         UserProfile?
+  conversations   ConversationParticipant[]
+  blockedUsers    Block[]                   @relation("BlockInitiator")
+  blockedBy       Block[]                   @relation("BlockTarget")
+  prayerRequests  PrayerRequest[]
+  prayerReactions PrayerReaction[]
+  readingPlans    ReadingPlan[]
+  fcmTokens       FcmToken[]
+  createdGroups   Group[]                   @relation("GroupCreator")
+
+  // Relations — Phase 2
+  mentorshipsAsMentor       MentorshipRelation[]        @relation("MentorUser")
+  mentorshipsAsMentee       MentorshipRelation[]        @relation("MenteeUser")
+  accountabilitiesInitiated AccountabilityPartnership[] @relation("AccountabilityInitiator")
+  accountabilitiesReceived  AccountabilityPartnership[] @relation("AccountabilityReceiver")
+  apologeticsQuestions      ApologeticsQuestion[]
+  apologeticsAnswers        ApologeticsAnswer[]
+  apologeticsAnswerVotes    ApologeticsAnswerVote[]
+  testimonies               Testimony[]
+  testimonyEncouragements   TestimonyEncouragement[]
+
+  // Relations — Dating Phase
+  verificationRecord   VerificationRecord?
+  datingProfile        DatingProfile?
+  likesGiven           DatingLike[]   @relation("LikeGiver")
+  likesReceived        DatingLike[]   @relation("LikeReceiver")
+  matchesAsUser1       DatingMatch[]  @relation("MatchUser1")
+  matchesAsUser2       DatingMatch[]  @relation("MatchUser2")
+
+  // Relations — Phase 3 Daily Engagement
+  storyViews         StoryView[]
+  verseAttempts      UserVerseAttempt[]
+  verseStreak        VerseStreak?
+  journalEntries     JournalEntry[]
+  sermonNotes        SermonNote[]
+  userActivityTags   UserActivityTag[]
+
+  // Relations — Phase 4 In-Person & Live Bridge
+  createdEvents      Event[]              @relation("EventCreator")
+  eventRsvps         EventRsvp[]
+  liveStreams        LiveStream[]         @relation("StreamHost")
+  audioRooms         AudioRoom[]          @relation("RoomHost")
+  audioSpeakerRoles  AudioRoomSpeaker[]
+  courseProgress     UserCourseProgress[]
+
+  // Relations — Phase 5 Growth & Ecosystem
+  givingRecords      GivingRecord[]
+  userPreference     UserPreference?
+
+  // Relations — Friendship & Connections System
+  friendshipsRequested Friendship[] @relation("FriendshipRequester")
+  friendshipsReceived  Friendship[] @relation("FriendshipRecipient")
+
+  @@index([clerkId])
+  @@index([email])
+  @@index([accountType])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// USER PROFILE (Phase 1 extended onboarding data + Phase 2 preferences)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model UserProfile {
+  id     String @id @default(cuid()) @map("_id")
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  faithBackground  FaithBackground?
+  denomination     Denomination?
+  /// Stored as comma-separated enum values for simplicity
+  joinReasons      JoinReason[]
+  bibleTranslation BibleTranslation @default(NIV)
+
+  /// Matching preferences for Bible Study Buddies
+  bibleStudyFocus String? // e.g. "Romans", "Psalms", "Prophecy"
+  studySchedule   String? // e.g. "weekends", "weekdays-evening"
+
+  /// Whether user is open to prayer partner matching
+  openToPrayerPartner Boolean @default(false)
+
+  // Accountability settings (Phase 2)
+  openToAccountability Boolean @default(false)
+  accountabilityFocus  String? // e.g. "purity" | "addiction_recovery" | "prayer_consistency" | "general_growth"
+  accountabilityIntake String? // Intake details ("What are you seeking accountability for?"), visible only for matching
+
+  // Mentorship settings (Phase 2)
+  isWillingToMentor  Boolean @default(false)
+  yearsAsBeliever    Int?
+  pastoralBackground String? // pastoral/leadership background for vetting
+  maxMentees         Int     @default(3)
+
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GROUPS & SUB-GROUPS (Phase 0 + Phase 1 additions)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Group {
+  id          String    @id @default(cuid()) @map("_id")
+  name        String
+  description String?
+  type        GroupType
+  avatarUrl   String?
+  isPrivate   Boolean   @default(false)
+
+  /// Sub-group support
+  parentGroupId String?
+  parentGroup   Group?  @relation("GroupHierarchy", fields: [parentGroupId], references: [id])
+  subGroups     Group[] @relation("GroupHierarchy")
+
+  /// Moderation ruleset — inherited by sub-groups
+  moderationRuleset Json @default("{}")
+
+  // Phase 1 additions
+  createdById      String?
+  createdBy        User?   @relation("GroupCreator", fields: [createdById], references: [id])
+  maxMembers       Int?
+  requiresApproval Boolean @default(false)
+
+  /// Bible Study specific fields
+  bibleTranslation BibleTranslation?
+  denominationTag  Denomination?
+  studyFocus       String? // book or topic
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  members  GroupMember[]
+  messages Message[]
+  reports  Report[]      @relation("ReportedGroup")
+  stories  Story[]
+
+  @@index([type])
+  @@index([parentGroupId])
+  @@index([createdById])
+}
+
+model GroupMember {
+  id      String     @id @default(cuid()) @map("_id")
+  userId  String
+  groupId String
+  role    MemberRole @default(member)
+
+  /// Pending = waiting for admin approval (when requiresApproval = true)
+  isPending Boolean @default(false)
+
+  joinedAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupId])
+  @@index([userId])
+  @@index([groupId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONVERSATIONS (1:1 DMs) — Phase 1
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Conversation {
+  id String @id @default(cuid()) @map("_id")
+
+  /// For display: last message preview
+  lastMessageAt      DateTime?
+  lastMessagePreview String?
+
+  createdAt DateTime @default(now())
+
+  participants ConversationParticipant[]
+  messages     DirectMessage[]
+
+  @@index([lastMessageAt])
+}
+
+model ConversationParticipant {
+  id             String @id @default(cuid()) @map("_id")
+  conversationId String
+  userId         String
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Track read cursor
+  lastReadAt DateTime?
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model DirectMessage {
+  id             String       @id @default(cuid()) @map("_id")
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  senderId String
+
+  content   String?
+  mediaUrl  String?
+  mediaType String?
+
+  moderationStatus ModerationStatus @default(pending)
+  moderationReason String?
+  moderatedAt      DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId])
+  @@index([senderId])
+  @@index([moderationStatus])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MESSAGES (group messages — Phase 0, unchanged)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Message {
+  id      String  @id @default(cuid()) @map("_id")
+  content String?
+
+  senderId String
+  sender   User   @relation("MessageSender", fields: [senderId], references: [id])
+
+  groupId String?
+  group   Group?  @relation(fields: [groupId], references: [id])
+
+  recipientId String?
+  recipient   User?   @relation("MessageRecipient", fields: [recipientId], references: [id])
+
+  mediaUrl  String?
+  mediaType String?
+
+  moderationStatus ModerationStatus @default(pending)
+  moderationReason String?
+  moderatedAt      DateTime?
+
+  createdAt DateTime @default(now())
+
+  reports Report[] @relation("ReportedMessage")
+
+  @@index([senderId])
+  @@index([groupId])
+  @@index([recipientId])
+  @@index([moderationStatus])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BLOCKING — Phase 1
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Block {
+  id          String @id @default(cuid()) @map("_id")
+  initiatorId String
+  targetId    String
+
+  initiator User @relation("BlockInitiator", fields: [initiatorId], references: [id], onDelete: Cascade)
+  target    User @relation("BlockTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([initiatorId, targetId])
+  @@index([initiatorId])
+  @@index([targetId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRAYER WALL — Phase 1
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PrayerRequest {
+  id       String @id @default(cuid()) @map("_id")
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+
+  content String
+  title   String?
+
+  /// If true, author name is hidden on the public wall
+  isAnonymous Boolean @default(false)
+
+  /// User can mark their own request as answered
+  isAnswered Boolean   @default(false)
+  answeredAt DateTime?
+
+  /// Moderation
+  moderationStatus ModerationStatus @default(pending)
+  moderationReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reactions PrayerReaction[]
+  reports   Report[]         @relation("ReportedPrayer")
+
+  @@index([authorId])
+  @@index([moderationStatus])
+  @@index([createdAt])
+}
+
+model PrayerReaction {
+  id              String @id @default(cuid()) @map("_id")
+  prayerRequestId String
+  userId          String
+
+  type    PrayerReactionType
+  comment String? // only populated when type = comment
+
+  prayerRequest PrayerRequest @relation(fields: [prayerRequestId], references: [id], onDelete: Cascade)
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([prayerRequestId])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// READING PLANS — Phase 1
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ReadingPlan {
+  id     String @id @default(cuid()) @map("_id")
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Template ID references reading-plan-templates.json
+  templateId String
+  name       String
+
+  lengthDays Int // 7, 30, 90, or 365
+  focus      ReadingPlanFocus
+
+  startDate     DateTime @default(now())
+  targetEndDate DateTime
+
+  currentDay    Int @default(1)
+  streak        Int @default(0)
+  longestStreak Int @default(0)
+
+  /// FCM reminder time preference (24h format HH:mm, user's local time)
+  reminderTime String? // e.g. "08:00"
+
+  isActive    Boolean   @default(true)
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  days ReadingPlanDay[]
+
+  @@index([userId])
+  @@index([isActive])
+}
+
+model ReadingPlanDay {
+  id            String      @id @default(cuid()) @map("_id")
+  readingPlanId String
+  readingPlan   ReadingPlan @relation(fields: [readingPlanId], references: [id], onDelete: Cascade)
+
+  dayNumber    Int
+  /// Bible passage reference e.g. "GEN.1.1-GEN.1.31"
+  passageRef   String
+  /// Display label e.g. "Genesis 1"
+  passageLabel String
+
+  isCompleted Boolean   @default(false)
+  completedAt DateTime?
+
+  /// Optional personal notes
+  notes String?
+
+  @@unique([readingPlanId, dayNumber])
+  @@index([readingPlanId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FCM TOKENS — Phase 1
+// ─────────────────────────────────────────────────────────────────────────────
+
+model FcmToken {
+  id     String @id @default(cuid()) @map("_id")
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  token    String @unique
+  platform String // "web" | "android" | "ios"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REPORTS (extended for prayer_request target) — Phase 0 + Phase 1
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Report {
+  id String @id @default(cuid()) @map("_id")
+
+  reporterId String
+  reporter   User   @relation("ReportSubmitter", fields: [reporterId], references: [id])
+
+  targetType ReportTargetType
+  targetId   String
+
+  targetMessageId String?
+  targetMessage   Message? @relation("ReportedMessage", fields: [targetMessageId], references: [id])
+
+  targetUserId String?
+  targetUser   User?   @relation("ReportedUser", fields: [targetUserId], references: [id])
+
+  targetGroupId String?
+  targetGroup   Group?  @relation("ReportedGroup", fields: [targetGroupId], references: [id])
+
+  targetPrayerRequestId String?
+  targetPrayerRequest   PrayerRequest? @relation("ReportedPrayer", fields: [targetPrayerRequestId], references: [id])
+
+  reason            String
+  additionalContext String?
+
+  status     ReportStatus @default(pending)
+  reviewedBy String?
+  reviewNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([reporterId])
+  @@index([targetType, targetId])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STORIES — Phase 0 schema-only
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum StoryVisibility {
+  everyone
+  group_only
+}
+
+model Story {
+  id               String           @id @default(cuid()) @map("_id")
+  userId           String
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mediaUrl         String
+  mediaType        String           @default("image") // "image" or "video"
+  textOverlay      String?
+  verseRef         String?          // Auto-populated if created from Verse-of-Day
+  visibility       StoryVisibility  @default(everyone)
+  groupId          String?          // Group ID if visibility == group_only
+  group            Group?           @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  expiresAt        DateTime
+  moderationStatus ModerationStatus @default(pending)
+  moderationReason String?
+  createdAt        DateTime         @default(now())
+
+  views StoryView[]
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([moderationStatus])
+  @@index([groupId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN ACTIONS (audit log) — Phase 0
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AdminAction {
+  id      String @id @default(cuid()) @map("_id")
+  adminId String
+  admin   User   @relation("AdminActor", fields: [adminId], references: [id])
+
+  action     AdminActionType
+  targetType String
+  targetId   String
+  notes      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([adminId])
+  @@index([targetType, targetId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACCOUNTABILITY PARTNERSHIP (Phase 2)
+// ─────────────────────────────────────────────────────────────────────────────
+model AccountabilityPartnership {
+  id          String   @id @default(cuid()) @map("_id")
+  initiatorId String
+  receiverId  String
+  status      String   @default("pending") // "pending" | "active" | "closed"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  initiator User @relation("AccountabilityInitiator", fields: [initiatorId], references: [id], onDelete: Cascade)
+  receiver  User @relation("AccountabilityReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([initiatorId, receiverId])
+  @@index([initiatorId])
+  @@index([receiverId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MENTORSHIP RELATION (Phase 2)
+// ─────────────────────────────────────────────────────────────────────────────
+model MentorshipRelation {
+  id                 String   @id @default(cuid()) @map("_id")
+  mentorId           String
+  menteeId           String
+  status             String   @default("pending") // "pending" | "active" | "completed"
+  currentWeek        Int      @default(1)
+  curriculumProgress Json     @default("[]") // stores list of completed weeks
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  mentor User @relation("MentorUser", fields: [mentorId], references: [id], onDelete: Cascade)
+  mentee User @relation("MenteeUser", fields: [menteeId], references: [id], onDelete: Cascade)
+
+  @@unique([mentorId, menteeId])
+  @@index([mentorId])
+  @@index([menteeId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// APOLOGETICS (Phase 2)
+// ─────────────────────────────────────────────────────────────────────────────
+model ApologeticsQuestion {
+  id        String   @id @default(cuid()) @map("_id")
+  title     String
+  content   String
+  topic     String // "existence_of_god" | "problem_of_evil" | "resurrection_evidence" | "science_and_faith" | "textual_reliability" | "comparative_religion"
+  authorId  String
+  upvotes   Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  author  User                @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  answers ApologeticsAnswer[]
+
+  @@index([authorId])
+  @@index([topic])
+}
+
+model ApologeticsAnswer {
+  id         String   @id @default(cuid()) @map("_id")
+  content    String
+  questionId String
+  authorId   String
+  upvotes    Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  question ApologeticsQuestion     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  author   User                    @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  votes    ApologeticsAnswerVote[]
+
+  @@index([questionId])
+  @@index([authorId])
+}
+
+model ApologeticsAnswerVote {
+  id        String   @id @default(cuid()) @map("_id")
+  answerId  String
+  userId    String
+  value     Int // 1 (upvote) or -1 (downvote)
+  createdAt DateTime @default(now())
+
+  answer ApologeticsAnswer @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  user   User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([answerId, userId])
+  @@index([answerId])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TESTIMONY (Phase 2)
+// ─────────────────────────────────────────────────────────────────────────────
+model Testimony {
+  id        String   @id @default(cuid()) @map("_id")
+  title     String
+  content   String
+  authorId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  author         User                     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  encouragements TestimonyEncouragement[]
+
+  @@index([authorId])
+}
+
+model TestimonyEncouragement {
+  id          String   @id @default(cuid()) @map("_id")
+  content     String
+  testimonyId String
+  authorId    String
+  createdAt   DateTime @default(now())
+
+  testimony Testimony @relation(fields: [testimonyId], references: [id], onDelete: Cascade)
+  author    User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([testimonyId])
+  @@index([authorId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DATING PHASE — ENUMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum RelationshipGoal {
+  marriage_minded      // Seriously pursuing marriage
+  getting_to_know      // Open to relationship, not rushing
+  open_to_long_distance // Geography is not a barrier
+}
+
+enum CourtshipView {
+  traditional_courtship  // Family-involved, slower pace
+  modern_dating          // Standard modern Christian dating
+  open_to_discussion     // Flexible
+}
+
+enum MarriageRoleView {
+  complementarian     // Distinct gender roles
+  egalitarian         // Shared leadership
+  open_to_discussion  // Flexible
+}
+
+enum VerificationStatus {
+  pending           // Inquiry created, awaiting completion
+  approved          // Identity verified
+  rejected          // Failed verification
+  requires_retry    // Partial completion — retry required
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IDENTITY VERIFICATION RECORD — Dating Phase
+// ─────────────────────────────────────────────────────────────────────────────
+
+model VerificationRecord {
+  id        String @id @default(cuid()) @map("_id")
+  userId    String @unique
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Provider used ("persona", "yoti", "veriff", "dev_stub")
+  provider    String
+  /// Provider-specific inquiry / session ID
+  inquiryId   String?
+  status      VerificationStatus @default(pending)
+  /// Human-readable rejection reason from provider
+  rejectionReason String?
+
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DATING PROFILE — Dating Phase
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DatingProfile {
+  id     String @id @default(cuid()) @map("_id")
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Age range preferences (both required, 18–80)
+  ageRangeMin Int @default(18)
+  ageRangeMax Int @default(45)
+
+  relationshipGoal   RelationshipGoal
+  courtshipView      CourtshipView
+  marriageRoleView   MarriageRoleView
+  openToLongDistance Boolean @default(false)
+
+  /// Short public bio (moderated)
+  bio String?
+
+  /// Up to 3 custom Q&A prompt answers stored as JSON array:
+  /// [{ question: string, answer: string }, ...]
+  promptAnswers Json @default("[]")
+
+  /// Moderation gate — profile only appears in browse when approved
+  moderationStatus ModerationStatus @default(pending)
+  moderationReason String?
+
+  /// Whether the user has opted into appearing in the browse feed
+  isVisible   Boolean  @default(true)
+  lastActiveAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([moderationStatus])
+  @@index([isVisible])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DATING LIKE — Dating Phase
+// An expression of interest from one user to another (anonymous until mutual)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DatingLike {
+  id         String @id @default(cuid()) @map("_id")
+  fromUserId String
+  toUserId   String
+
+  from User @relation("LikeGiver", fields: [fromUserId], references: [id], onDelete: Cascade)
+  to   User @relation("LikeReceiver", fields: [toUserId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([fromUserId, toUserId])
+  @@index([fromUserId])
+  @@index([toUserId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DATING MATCH — Dating Phase
+// Created when two users mutually like each other.
+// Immediately spawns a Conversation for chat.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DatingMatch {
+  id      String @id @default(cuid()) @map("_id")
+  user1Id String
+  user2Id String
+
+  user1 User @relation("MatchUser1", fields: [user1Id], references: [id], onDelete: Cascade)
+  user2 User @relation("MatchUser2", fields: [user2Id], references: [id], onDelete: Cascade)
+
+  /// Linked conversation for their chat
+  conversationId String? @unique
+
+  matchedAt DateTime @default(now())
+
+  /// Timestamp when pre-marriage resources were unlocked
+  /// (null = not yet unlocked, set after DATING_RESOURCE_UNLOCK_DAYS of chat activity)
+  resourcesUnlockedAt DateTime?
+
+  @@unique([user1Id, user2Id])
+  @@index([user1Id])
+  @@index([user2Id])
+  @@index([matchedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 3 — DAILY ENGAGEMENT FEATURES
+// ─────────────────────────────────────────────────────────────────────────────
+
+
+
+model StoryView {
+  id        String   @id @default(cuid()) @map("_id")
+  storyId   String
+  story     Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  viewerId  String
+  viewer    User     @relation(fields: [viewerId], references: [id], onDelete: Cascade)
+  viewedAt  DateTime @default(now())
+
+  @@unique([storyId, viewerId])
+  @@index([storyId])
+  @@index([viewerId])
+}
+
+model MemoryVerseChallenge {
+  id             String   @id @default(cuid()) @map("_id")
+  weekStart      DateTime @unique
+  verseRef       String
+  verseText      String
+  verseReference String
+  blanks         Json?    // Optional predefined blank positions for quiz
+  createdAt      DateTime @default(now())
+
+  attempts UserVerseAttempt[]
+
+  @@index([weekStart])
+}
+
+model UserVerseAttempt {
+  id          String               @id @default(cuid()) @map("_id")
+  userId      String
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challengeId String
+  challenge   MemoryVerseChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  score       Int                  // Percentage 0..100
+  isCorrect   Boolean              @default(false)
+  attemptedAt DateTime             @default(now())
+
+  @@index([userId])
+  @@index([challengeId])
+}
+
+model VerseStreak {
+  id              String    @id @default(cuid()) @map("_id")
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currentStreak   Int       @default(0)
+  longestStreak   Int       @default(0)
+  lastAttemptDate DateTime?
+  updatedAt       DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model JournalEntry {
+  id        String   @id @default(cuid()) @map("_id")
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  tags      String[] @default([])
+  isDeleted Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([isDeleted])
+}
+
+model SermonNote {
+  id          String   @id @default(cuid()) @map("_id")
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sermonTitle String
+  speaker     String?
+  sermonDate  DateTime @default(now())
+  /// Array of timestamped notes: [{ timestamp: "14:20", text: "Key point..." }]
+  notes       Json     @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([sermonDate])
+}
+
+enum RecommendationType {
+  devotional
+  apologetics
+  testimony
+  reading_plan
+  article
+}
+
+model ContentRecommendation {
+  id        String             @id @default(cuid()) @map("_id")
+  title     String
+  url       String?
+  type      RecommendationType
+  category  String
+  tags      String[]
+  summary   String?
+  isActive  Boolean            @default(true)
+  createdAt DateTime           @default(now())
+
+  @@index([category])
+  @@index([isActive])
+}
+
+model UserActivityTag {
+  id        String   @id @default(cuid()) @map("_id")
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tag       String
+  score     Int      @default(1)
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, tag])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 4 — IN-PERSON & LIVE MINISTRY BRIDGE
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum EventType {
+  service
+  conference
+  retreat
+  small_group
+  social
+}
+
+enum RsvpStatus {
+  going
+  maybe
+  declined
+}
+
+model Event {
+  id           String    @id @default(cuid()) @map("_id")
+  title        String
+  description  String?
+  type         EventType @default(service)
+  locationCity String
+  locationRegion String
+  address      String?
+  eventDate    DateTime
+  createdById  String
+  createdBy    User      @relation("EventCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  organization String?   // Church / Ministry partner name
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  rsvps EventRsvp[]
+
+  @@index([locationCity, locationRegion])
+  @@index([eventDate])
+  @@index([type])
+}
+
+model EventRsvp {
+  id        String     @id @default(cuid()) @map("_id")
+  eventId   String
+  event     Event      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    RsvpStatus @default(going)
+  createdAt DateTime   @default(now())
+
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@index([userId])
+}
+
+model LiveStream {
+  id           String   @id @default(cuid()) @map("_id")
+  title        String
+  description  String?
+  hostId       String
+  host         User     @relation("StreamHost", fields: [hostId], references: [id], onDelete: Cascade)
+  streamUrl    String   // Mux / Cloudflare Stream playback URL
+  isLive       Boolean  @default(false)
+  startedAt    DateTime @default(now())
+  endedAt      DateTime?
+  viewersCount Int      @default(0)
+
+  @@index([hostId])
+  @@index([isLive])
+}
+
+enum AudioRoomType {
+  prayer_night
+  ask_pastor
+  group_discussion
+}
+
+model AudioRoom {
+  id          String        @id @default(cuid()) @map("_id")
+  title       String
+  description String?
+  type        AudioRoomType @default(prayer_night)
+  hostId      String
+  host        User          @relation("RoomHost", fields: [hostId], references: [id], onDelete: Cascade)
+  isLive      Boolean       @default(true)
+  roomUrl     String?       // Daily.co / Agora room link
+  createdAt   DateTime      @default(now())
+
+  speakers AudioRoomSpeaker[]
+
+  @@index([hostId])
+  @@index([isLive])
+}
+
+model AudioRoomSpeaker {
+  id        String    @id @default(cuid()) @map("_id")
+  roomId    String
+  room      AudioRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String    @default("listener") // "host" | "speaker" | "listener"
+  isMuted   Boolean   @default(true)
+  handRaised Boolean  @default(false)
+
+  @@unique([roomId, userId])
+  @@index([roomId])
+  @@index([userId])
+}
+
+model DiscipleshipCourse {
+  id            String   @id @default(cuid()) @map("_id")
+  title         String
+  description   String
+  focus         String   // e.g. "new_converts" | "basics" | "leadership"
+  durationWeeks Int      @default(4)
+  createdAt     DateTime @default(now())
+
+  lessons  CourseLesson[]
+  progress UserCourseProgress[]
+
+  @@index([focus])
+}
+
+model CourseLesson {
+  id                  String             @id @default(cuid()) @map("_id")
+  courseId            String
+  course              DiscipleshipCourse @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  weekNumber          Int
+  title               String
+  videoUrl            String?
+  content             String
+  discussionQuestions Json               @default("[]") // Array of question strings
+
+  @@unique([courseId, weekNumber])
+  @@index([courseId])
+}
+
+model UserCourseProgress {
+  id             String             @id @default(cuid()) @map("_id")
+  userId         String
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId       String
+  course         DiscipleshipCourse @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  completedWeeks Json               @default("[]") // Array of week numbers [1, 2]
+  isCompleted    Boolean            @default(false)
+  updatedAt      DateTime           @updatedAt
+
+  @@unique([userId, courseId])
+  @@index([userId])
+  @@index([courseId])
+}
+
+model FamilyDevotional {
+  id               String   @id @default(cuid()) @map("_id")
+  title            String
+  track            String   // "marriage" | "parenting" | "family"
+  weekNumber       Int
+  scriptureRef     String
+  reflection       String
+  discussionPoints Json     @default("[]")
+  createdAt        DateTime @default(now())
+
+  @@index([track])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 5 — GROWTH, GIVING, ACCESSIBILITY & ECOSYSTEM
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum SubscriptionTier {
+  free
+  premium
+  church_partner
+}
+
+model GivingRecord {
+  id                   String   @id @default(cuid()) @map("_id")
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recipientType        String   // "missionary" | "church_partner" | "general"
+  recipientId          String
+  amount               Int      // In cents (e.g. 2500 = $25.00)
+  currency             String   @default("usd")
+  stripePaymentIntentId String?
+  isRecurring          Boolean  @default(false)
+  status               String   @default("succeeded")
+  createdAt            DateTime @default(now())
+
+  @@index([userId])
+  @@index([recipientType, recipientId])
+}
+
+model Missionary {
+  id           String   @id @default(cuid()) @map("_id")
+  name         String
+  organization String
+  location     String
+  bio          String
+  photoUrl     String?
+  prayerNeeds  Json     @default("[]") // Array of string prayer requests
+  givingUrl    String?
+  isVerified   Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@index([isVerified])
+}
+
+model UserPreference {
+  id             String   @id @default(cuid()) @map("_id")
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  language       String   @default("en") // "en" | "es" | "fr" | "pt" | "ko" | "sw"
+  textSize       String   @default("normal") // "normal" | "large" | "xlarge"
+  highContrast   Boolean  @default(false)
+  offlineEnabled Boolean  @default(true)
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FRIENDSHIP & CONNECTIONS SYSTEM
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Friendship {
+  id          String    @id @default(cuid()) @map("_id")
+  requesterId String
+  recipientId String
+  status      String    @default("pending") // "pending" | "accepted" | "declined" | "blocked"
+  createdAt   DateTime  @default(now())
+  respondedAt DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  requester User @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  recipient User @relation("FriendshipRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, recipientId])
+  @@index([requesterId])
+  @@index([recipientId])
+  @@index([status])
+}
+
+
+
+
