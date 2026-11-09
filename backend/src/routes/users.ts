@@ -4,9 +4,12 @@ import { prisma, isDbConnected } from '../lib/prisma';
 import { AccountType, Gender } from '@prisma/client';
 import { sendParentalConsentEmail } from '../services/emailService';
 import { store, savePersistentStore } from '../lib/persistence';
+import { createClerkClient } from '@clerk/backend';
+import { User } from '../models/User';
 import crypto from 'crypto';
 
 const router = Router();
+const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
 // All routes require auth
 router.use(requireAuth);
@@ -181,30 +184,107 @@ router.post('/complete-onboarding', async (req: AuthenticatedRequest, res: Respo
       accountType = AccountType.adult_unverified;
     }
 
-    const user = await prisma.user.update({
-      where: { clerkId: req.userId },
-      data: {
-        dateOfBirth: dob,
-        gender: gender as Gender,
-        displayName,
-        accountType,
-        statementOfFaithAccepted: true,
-        ...(parentEmail && { parentEmail }),
-        ...(parentConsentToken && { parentConsentToken }),
-      },
-      select: {
-        id: true,
-        displayName: true,
-        accountType: true,
-        statementOfFaithAccepted: true,
-        parentConsentGiven: true,
+    // Retrieve user email and profile from Clerk if available
+    let userEmail = '';
+    let userAvatar: string | null = null;
+    try {
+      if (req.userId && process.env.CLERK_SECRET_KEY) {
+        const clerkUser = await clerkClient.users.getUser(req.userId);
+        userEmail = clerkUser.emailAddresses[0]?.emailAddress || '';
+        userAvatar = clerkUser.imageUrl || null;
+      }
+    } catch (clerkErr) {
+      console.warn('[Onboarding] Could not fetch user from Clerk:', clerkErr);
+    }
+
+    if (!userEmail) {
+      userEmail = `${req.userId}@christianconnect.app`;
+    }
+
+    // Check if user already exists by clerkId or email
+    let existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { clerkId: req.userId! },
+          { email: userEmail },
+        ],
       },
     });
 
+    let user: any;
+
+    if (existingUser) {
+      user = await prisma.user.update({
+        where: { id: existingUser.id },
+        data: {
+          clerkId: req.userId!,
+          dateOfBirth: dob,
+          gender: gender as Gender,
+          displayName,
+          accountType,
+          statementOfFaithAccepted: true,
+          ...(userAvatar && { avatarUrl: userAvatar }),
+          ...(parentEmail && { parentEmail }),
+          ...(parentConsentToken && { parentConsentToken }),
+        },
+        select: {
+          id: true,
+          displayName: true,
+          accountType: true,
+          statementOfFaithAccepted: true,
+          parentConsentGiven: true,
+        },
+      });
+    } else {
+      user = await prisma.user.create({
+        data: {
+          clerkId: req.userId!,
+          email: userEmail,
+          displayName,
+          dateOfBirth: dob,
+          gender: gender as Gender,
+          accountType,
+          statementOfFaithAccepted: true,
+          ...(userAvatar && { avatarUrl: userAvatar }),
+          ...(parentEmail && { parentEmail }),
+          ...(parentConsentToken && { parentConsentToken }),
+        },
+        select: {
+          id: true,
+          displayName: true,
+          accountType: true,
+          statementOfFaithAccepted: true,
+          parentConsentGiven: true,
+        },
+      });
+    }
+
+    // Sync to Mongoose User collection
+    try {
+      await User.findOneAndUpdate(
+        { clerkId: req.userId },
+        {
+          clerkId: req.userId,
+          email: userEmail,
+          displayName,
+          dateOfBirth: dob,
+          gender,
+          accountType,
+          statementOfFaithAccepted: true,
+          ...(userAvatar && { avatarUrl: userAvatar }),
+          ...(parentEmail && { parentEmail }),
+          ...(parentConsentToken && { parentConsentToken }),
+        },
+        { upsert: true, new: true }
+      );
+    } catch (mongoErr) {
+      console.warn('[Onboarding] Mongoose user sync notice:', mongoErr);
+    }
+
     res.json({ user, isMinor: age < 18 });
-  } catch (err) {
+  } catch (err: any) {
     console.error('[Onboarding] Error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });
 
