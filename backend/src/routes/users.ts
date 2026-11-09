@@ -27,7 +27,7 @@ router.get('/me', async (req: AuthenticatedRequest, res: Response): Promise<void
       return;
     }
 
-    const user = await prisma.user.findUnique({
+    let user: any = await prisma.user.findUnique({
       where: { clerkId: req.userId },
       select: {
         id: true,
@@ -43,6 +43,71 @@ router.get('/me', async (req: AuthenticatedRequest, res: Response): Promise<void
         createdAt: true,
       },
     });
+
+    if (!user) {
+      // Check Mongoose User model as fallback
+      try {
+        const mongoUser = await User.findOne({ clerkId: req.userId }).lean() as any;
+        if (mongoUser) {
+          user = {
+            id: String(mongoUser._id),
+            email: mongoUser.email,
+            displayName: mongoUser.displayName,
+            bio: mongoUser.bio || null,
+            avatarUrl: mongoUser.avatarUrl || null,
+            gender: mongoUser.gender || 'prefer_not_to_say',
+            accountType: mongoUser.accountType || 'adult_unverified',
+            statementOfFaithAccepted: Boolean(mongoUser.statementOfFaithAccepted),
+            parentConsentGiven: Boolean(mongoUser.parentConsentGiven),
+            isBanned: Boolean(mongoUser.isBanned),
+            createdAt: mongoUser.createdAt || new Date(),
+          };
+        }
+      } catch (mErr) {
+        console.warn('[Users/me] Mongoose lookup fallback:', mErr);
+      }
+    }
+
+    if (!user) {
+      // Auto-provision from Clerk if user is authenticated
+      try {
+        if (req.userId && process.env.CLERK_SECRET_KEY) {
+          const clerkUser = await clerkClient.users.getUser(req.userId);
+          const email = clerkUser.emailAddresses[0]?.emailAddress || `${req.userId}@christianconnect.app`;
+          const displayName = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(' ') || clerkUser.username || 'Believer';
+          const avatarUrl = clerkUser.imageUrl || null;
+
+          const created = await prisma.user.create({
+            data: {
+              clerkId: req.userId,
+              email,
+              displayName,
+              avatarUrl,
+              dateOfBirth: new Date('2000-01-01'),
+              gender: 'prefer_not_to_say',
+              accountType: 'adult_unverified',
+              statementOfFaithAccepted: true,
+            },
+            select: {
+              id: true,
+              email: true,
+              displayName: true,
+              bio: true,
+              avatarUrl: true,
+              gender: true,
+              accountType: true,
+              statementOfFaithAccepted: true,
+              parentConsentGiven: true,
+              isBanned: true,
+              createdAt: true,
+            },
+          });
+          user = created;
+        }
+      } catch (cErr) {
+        console.warn('[Users/me] Clerk auto-provision notice:', cErr);
+      }
+    }
 
     if (!user) {
       res.status(404).json({ error: 'User account not found' });
