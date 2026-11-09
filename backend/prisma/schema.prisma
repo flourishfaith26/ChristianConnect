@@ -248,8 +248,6 @@ model User {
   friendshipsRequested Friendship[] @relation("FriendshipRequester")
   friendshipsReceived  Friendship[] @relation("FriendshipRecipient")
 
-  @@index([clerkId])
-  @@index([email])
   @@index([accountType])
 }
 
@@ -288,7 +286,6 @@ model UserProfile {
 
   updatedAt DateTime @updatedAt
 
-  @@index([userId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -305,7 +302,7 @@ model Group {
 
   /// Sub-group support
   parentGroupId String?
-  parentGroup   Group?  @relation("GroupHierarchy", fields: [parentGroupId], references: [id])
+  parentGroup   Group?  @relation("GroupHierarchy", fields: [parentGroupId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   subGroups     Group[] @relation("GroupHierarchy")
 
   /// Moderation ruleset — inherited by sub-groups
@@ -858,7 +855,6 @@ model VerificationRecord {
   completedAt DateTime?
   updatedAt   DateTime @updatedAt
 
-  @@index([userId])
   @@index([status])
 }
 
@@ -898,7 +894,6 @@ model DatingProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([userId])
   @@index([moderationStatus])
   @@index([isVisible])
 }
@@ -982,7 +977,6 @@ model MemoryVerseChallenge {
 
   attempts UserVerseAttempt[]
 
-  @@index([weekStart])
 }
 
 model UserVerseAttempt {
@@ -1008,7 +1002,6 @@ model VerseStreak {
   lastAttemptDate DateTime?
   updatedAt       DateTime  @updatedAt
 
-  @@index([userId])
 }
 
 model JournalEntry {
@@ -1293,7 +1286,6 @@ model UserPreference {
   offlineEnabled Boolean  @default(true)
   updatedAt      DateTime @updatedAt
 
-  @@index([userId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1317,7 +1309,4 @@ model Friendship {
   @@index([recipientId])
   @@index([status])
 }
-
-
-
 
