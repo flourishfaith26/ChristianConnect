@@ -19,7 +19,16 @@ export async function apiFetch(
     headers['Authorization'] = 'Bearer dev_demo_token';
   }
 
-  return fetch(path, { ...fetchOptions, headers });
+  const backendUrl = (
+    process.env.NEXT_PUBLIC_API_URL ||
+    'https://christianconnect.onrender.com'
+  ).replace(/\/+$/, '');
+
+  const resolvedUrl = path.startsWith('http://') || path.startsWith('https://')
+    ? path
+    : `${backendUrl}${path.startsWith('/') ? path : `/${path}`}`;
+
+  return fetch(resolvedUrl, { ...fetchOptions, headers });
 }
 
 /**

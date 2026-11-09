@@ -1,90 +1,128 @@
-import { auth, currentUser } from '@clerk/nextjs/server';
-import { redirect } from 'next/navigation';
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useAuth, useUser } from '@clerk/nextjs';
+import { useRouter } from 'next/navigation';
 import DashboardClient from './DashboardClient';
-import type { Metadata } from 'next';
+import { apiRequest } from '@/lib/api';
 
-export const metadata: Metadata = {
-  title: 'Dashboard',
-  description: 'Your ChristianConnect community hub.',
-};
+export default function DashboardPage() {
+  const { isLoaded, isSignedIn, getToken } = useAuth();
+  const { user: clerkUser } = useUser();
+  const router = useRouter();
 
-export default async function DashboardPage() {
-  const { userId, getToken } = await auth();
+  const [loading, setLoading] = useState(true);
+  const [userData, setUserData] = useState<any>(null);
 
-  if (!userId) {
-    redirect('/sign-in');
-  }
+  useEffect(() => {
+    if (!isLoaded) return;
 
-  const token = await getToken();
-  if (!token) {
-    redirect('/sign-in');
-  }
-
-  // Fetch user profile from our backend
-  let user: any = null;
-  let isUnauthorized = false;
-  let isNotFound = false;
-
-  const apiUrl = (
-    process.env.BACKEND_INTERNAL_URL ||
-    process.env.NEXT_PUBLIC_API_URL ||
-    'https://christianconnect.onrender.com'
-  ).replace(/\/+$/, '');
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 7000);
-
-    const res = await fetch(`${apiUrl}/api/users/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: 'no-store',
-      signal: controller.signal,
-    }).finally(() => clearTimeout(timeout));
-
-    if (res.status === 401) {
-      isUnauthorized = true;
-    } else if (res.status === 404) {
-      isNotFound = true;
-    } else if (res.ok) {
-      user = await res.json();
+    if (!isSignedIn) {
+      router.replace('/sign-in');
+      return;
     }
-  } catch (err) {
-    console.warn('[DashboardPage] Account backend fetch notice:', err);
-    // Never crash the Server Component render due to cold starts or network timeouts
-  }
 
-  if (isUnauthorized) {
-    redirect('/sign-in');
-  }
+    let isMounted = true;
 
-  // If the backend specifically reported 404, send the user to complete onboarding
-  if (isNotFound) {
-    redirect('/onboarding');
-  }
+    async function loadUser() {
+      try {
+        const token = await getToken();
 
-  // Resilient fallback: If the backend is cold-booting, offline, or timed out,
-  // hydrate user identity from Clerk session so the dashboard renders safely.
-  if (!user) {
-    const clerkUser = await currentUser();
-    const displayName =
-      [clerkUser?.firstName, clerkUser?.lastName].filter(Boolean).join(' ') ||
-      clerkUser?.username ||
-      'Believer';
-    const email = clerkUser?.emailAddresses?.[0]?.emailAddress || `${userId}@christianconnect.app`;
-    const avatarUrl = clerkUser?.imageUrl || null;
+        // Attempt to fetch profile from the backend
+        try {
+          const res = await apiRequest<any>('/api/users/me', {
+            token: token ?? undefined,
+          });
 
-    user = {
-      id: userId,
-      displayName,
-      email,
-      avatarUrl,
-      accountType: 'adult_unverified',
-      statementOfFaithAccepted: true,
-      parentConsentGiven: true,
+          if (!isMounted) return;
+
+          if (res) {
+            if (!res.statementOfFaithAccepted) {
+              router.replace('/onboarding');
+              return;
+            }
+            setUserData(res);
+            setLoading(false);
+            return;
+          }
+        } catch (apiErr: any) {
+          console.warn('[Dashboard] Account backend fetch notice:', apiErr);
+          // If the backend explicitly returned a 404 (user needs to complete onboarding)
+          const errorMsg = String(apiErr?.message || '');
+          if (errorMsg.includes('404') || errorMsg.toLowerCase().includes('not found')) {
+            if (isMounted) router.replace('/onboarding');
+            return;
+          }
+        }
+
+        // Resilient fallback: If backend is cold-booting, offline, or timed out,
+        // hydrate user identity directly from the active Clerk session.
+        if (isMounted) {
+          const displayName =
+            clerkUser?.fullName ||
+            clerkUser?.username ||
+            [clerkUser?.firstName, clerkUser?.lastName].filter(Boolean).join(' ') ||
+            'Believer';
+
+          const fallbackUser = {
+            id: clerkUser?.id || '',
+            displayName,
+            email: clerkUser?.primaryEmailAddress?.emailAddress || '',
+            avatarUrl: clerkUser?.imageUrl || null,
+            accountType: 'adult_unverified' as const,
+            statementOfFaithAccepted: true,
+            parentConsentGiven: true,
+          };
+          setUserData(fallbackUser);
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('[Dashboard] Error initializing dashboard:', err);
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadUser();
+
+    return () => {
+      isMounted = false;
     };
-  } else if (!user.statementOfFaithAccepted) {
-    redirect('/onboarding');
+  }, [isLoaded, isSignedIn, clerkUser, getToken, router]);
+
+  if (!isLoaded || loading) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#0d1f14',
+        color: '#e2ece6',
+        gap: '16px',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+      }}>
+        <div style={{
+          width: '42px',
+          height: '42px',
+          border: '3px solid rgba(46,125,50,0.25)',
+          borderTopColor: '#2e7d32',
+          borderRadius: '50%',
+          animation: 'dashboard-spin 0.9s linear infinite',
+        }} />
+        <p style={{ fontSize: '15px', color: '#a5d6a7', margin: 0, fontWeight: 500 }}>
+          Connecting to ChristianConnect...
+        </p>
+        <style>{`
+          @keyframes dashboard-spin {
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
+      </div>
+    );
   }
 
-  return <DashboardClient user={user} />;
+  return <DashboardClient user={userData} />;
 }
