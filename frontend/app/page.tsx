@@ -320,8 +320,8 @@ export default function HomePage() {
             flexWrap: 'wrap',
             marginBottom: '48px',
           }}>
-            <Link href="/sign-up" className="btn btn-primary btn-xl glow" style={{ fontSize: '17px', padding: '16px 36px', borderRadius: '12px' }}>
-              <span>Get Started Free</span>
+            <Link href={isSignedIn ? "/dashboard" : "/sign-up"} className="btn btn-primary btn-xl glow" style={{ fontSize: '17px', padding: '16px 36px', borderRadius: '12px' }}>
+              <span>{isSignedIn ? 'Enter Dashboard' : 'Get Started Free'}</span>
               <span style={{ fontSize: '20px' }}>→</span>
             </Link>
             <a
@@ -1111,13 +1111,15 @@ export default function HomePage() {
           </p>
 
           <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link href="/sign-up" className="btn btn-gold btn-xl" style={{ fontSize: '18px', padding: '18px 40px', borderRadius: '12px' }}>
-              <span>Create Free Account</span>
+            <Link href={isSignedIn ? "/dashboard" : "/sign-up"} className="btn btn-gold btn-xl" style={{ fontSize: '18px', padding: '18px 40px', borderRadius: '12px' }}>
+              <span>{isSignedIn ? 'Enter Dashboard' : 'Create Free Account'}</span>
               <span>→</span>
             </Link>
-            <Link href="/sign-in" className="btn btn-outline-white btn-xl" style={{ fontSize: '18px', padding: '18px 36px', borderRadius: '12px' }}>
-              <span>Sign In</span>
-            </Link>
+            {!isSignedIn && (
+              <Link href="/sign-in" className="btn btn-outline-white btn-xl" style={{ fontSize: '18px', padding: '18px 36px', borderRadius: '12px' }}>
+                <span>Sign In</span>
+              </Link>
+            )}
           </div>
 
           <div style={{ marginTop: '24px', fontSize: '13px', color: 'rgba(255,255,255,0.6)' }}>

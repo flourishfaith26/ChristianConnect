@@ -1,14 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSignUp } from '@clerk/nextjs/legacy';
+import { useAuth, useClerk } from '@clerk/nextjs';
 import Link from 'next/link';
 import Logo from '@/components/Logo';
 
 export default function SignUpPage() {
   const router = useRouter();
   const { isLoaded, signUp, setActive } = useSignUp();
+  const { isLoaded: authLoaded, isSignedIn } = useAuth();
+  const { signOut } = useClerk();
 
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -18,6 +21,13 @@ export default function SignUpPage() {
   const [awaitingEmailVerification, setAwaitingEmailVerification] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // If user is already authenticated, automatically redirect them to their dashboard
+  useEffect(() => {
+    if (authLoaded && isSignedIn) {
+      router.replace('/dashboard');
+    }
+  }, [authLoaded, isSignedIn, router]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -67,7 +77,12 @@ export default function SignUpPage() {
 
       setError('Account setup is incomplete. Please check your sign-up details and try again.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to create your account. Please try again.');
+      const msg = err instanceof Error ? err.message : 'Unable to create your account. Please try again.';
+      if (msg.toLowerCase().includes('already signed in')) {
+        router.replace('/dashboard');
+        return;
+      }
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -93,6 +108,35 @@ export default function SignUpPage() {
     }
   }
 
+  if (authLoaded && isSignedIn) {
+    return (
+      <div className="page-center" style={{ background: 'var(--bg-base)', flexDirection: 'column', gap: '24px', padding: '24px' }}>
+        <div className="glass-strong animate-fade-in" style={{ width: '100%', maxWidth: '440px', padding: '36px', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
+          <Logo size="lg" withLink href="/" showText={false} />
+          <h1 style={{ fontSize: '24px', fontWeight: 700, fontFamily: 'var(--font-serif)', margin: '16px 0 8px 0' }}>
+            You&apos;re Already Signed In
+          </h1>
+          <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '24px' }}>
+            Welcome back! You already have an active session on ChristianConnect.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <Link href="/dashboard" className="btn btn-primary btn-lg" style={{ width: '100%', textDecoration: 'none' }}>
+              Go to Dashboard →
+            </Link>
+            <button
+              type="button"
+              onClick={() => signOut({ redirectUrl: '/sign-up' })}
+              className="btn btn-outline"
+              style={{ width: '100%' }}
+            >
+              Sign Out & Create Another Account
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="page-center" style={{ background: 'var(--bg-base)', flexDirection: 'column', gap: '24px', padding: '24px' }}>
       <div className="glass-strong animate-fade-in" style={{ width: '100%', maxWidth: '440px', padding: '36px', borderRadius: 'var(--radius-lg)' }}>
@@ -112,11 +156,17 @@ export default function SignUpPage() {
 
         {error && (
           <div style={{
-            padding: '10px 14px', borderRadius: 'var(--radius-md)',
+            padding: '12px 14px', borderRadius: 'var(--radius-md)',
             background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)',
             color: '#f87171', fontSize: '13px', marginBottom: '20px',
+            display: 'flex', flexDirection: 'column', gap: '8px',
           }}>
-            ⚠️ {error}
+            <div>⚠️ {error}</div>
+            {error.toLowerCase().includes('already signed in') && (
+              <Link href="/dashboard" className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-start', textDecoration: 'none', marginTop: '4px' }}>
+                Go to Dashboard →
+              </Link>
+            )}
           </div>
         )}
 
